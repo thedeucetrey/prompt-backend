@@ -247,10 +247,4 @@ app.get('/api/npc/:npcId', async (req, res) => {
 
 // ---- Start Server ----
 const PORT = process.env.PORT || 3000;
-<<<<<<< HEAD
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-=======
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-
-
->>>>>>> 774d580a923cb4ba3b683afbdea6b92c4e3cf254
