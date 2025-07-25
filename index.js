@@ -1,4 +1,3 @@
-// index.js
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -13,6 +12,16 @@ db.on('error', (error) => console.error(error));
 db.once('open', () => console.log('MongoDB connected'));
 
 // ---- SCHEMAS ----
+
+const npcEventLogSchema = new mongoose.Schema({
+  npcId: { type: String, required: true },
+  timestamp: { type: Date, default: Date.now },
+  summary: { type: String, required: true },
+  feeling: { type: String }, // e.g. 'angry', 'bored'
+  data: { type: Object },
+});
+const NPCEventLog = mongoose.model('NPCEventLog', npcEventLogSchema);
+
 const eventLogSchema = new mongoose.Schema({
   playerId: { type: String, required: true },
   timestamp: { type: Date, default: Date.now },
@@ -28,7 +37,6 @@ const playerSchema = new mongoose.Schema({
   location: String,
   stats: {
     money: { type: Number, default: 0 },
-    // add more stats as needed
   },
 });
 const Player = mongoose.model('Player', playerSchema);
@@ -44,10 +52,29 @@ const inventorySchema = new mongoose.Schema({
 });
 const Inventory = mongoose.model('Inventory', inventorySchema);
 
+const relationshipSchema = new mongoose.Schema({
+  targetId: String, // playerId or npcId
+  targetType: { type: String, enum: ['npc', 'player'] },
+  attitude: String, // e.g. 'friendly', 'hostile'
+  notes: String,
+}, { _id: false });
+
+const memorySchema = new mongoose.Schema({
+  timestamp: { type: Date, default: Date.now },
+  summary: String,
+  feeling: String,
+  data: Object,
+}, { _id: false });
+
 const npcSchema = new mongoose.Schema({
+  npcId: { type: String, required: true, unique: true },
   name: String,
   location: String,
-  personality: [String],
+  personality: [String], // ['charming', 'impulsive', 'sarcastic', 'resentful']
+  mood: String, // current emotional state
+  attitudeTowardPlayer: String, // e.g. 'hostile', 'friendly', 'jealous'
+  relationships: [relationshipSchema],
+  memories: [memorySchema],
   state: Object,
 });
 const NPC = mongoose.model('NPC', npcSchema);
@@ -80,12 +107,29 @@ function getFormattedTime(date = new Date()) {
 
 // ---- ROUTES ----
 
-// Log a new event
+// Log a new event for player
 app.post('/api/log-event', async (req, res) => {
   try {
     const { playerId, type, summary, data } = req.body;
     if (!playerId || !type || !summary) return res.status(400).json({ error: 'Missing data' });
     const log = await EventLog.create({ playerId, type, summary, data });
+    res.json({ success: true, log });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Log a new event for NPC
+app.post('/api/log-npc-event', async (req, res) => {
+  try {
+    const { npcId, summary, feeling, data } = req.body;
+    if (!npcId || !summary) return res.status(400).json({ error: 'Missing data' });
+    const log = await NPCEventLog.create({ npcId, summary, feeling, data });
+    // Also push to the NPC's memories array
+    await NPC.updateOne(
+      { npcId },
+      { $push: { memories: { summary, feeling, data, timestamp: new Date() } } }
+    );
     res.json({ success: true, log });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -104,13 +148,26 @@ app.get('/api/event-log/:playerId', async (req, res) => {
   }
 });
 
-// Get full player state, including formatted time, location, and money
+// Get recent event logs for an NPC (their perspective)
+app.get('/api/npc-event-log/:npcId', async (req, res) => {
+  try {
+    const { npcId } = req.params;
+    const limit = parseInt(req.query.limit) || 10;
+    const logs = await NPCEventLog.find({ npcId }).sort({ timestamp: -1 }).limit(limit);
+    res.json({ logs: logs.reverse() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get full player state, including visible NPCs and formatted time
 app.get('/api/player-state/:playerId', async (req, res) => {
   try {
     const { playerId } = req.params;
     const player = await Player.findOne({ playerId });
     if (!player) return res.status(404).json({ error: 'Player not found' });
     const inventory = await Inventory.findOne({ playerId });
+    // Only fetch NPCs in same location as player
     const npcs = await NPC.find({ location: player.location });
     const currentTime = getFormattedTime();
     res.json({
@@ -131,7 +188,20 @@ app.get('/api/player-state/:playerId', async (req, res) => {
   }
 });
 
+// Get full NPC state (for NPC's "mind")
+app.get('/api/npc/:npcId', async (req, res) => {
+  try {
+    const { npcId } = req.params;
+    const npc = await NPC.findOne({ npcId });
+    if (!npc) return res.status(404).json({ error: 'NPC not found' });
+    res.json(npc);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ---- Start Server ----
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
 
