@@ -2,17 +2,15 @@ const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 
-// ---- Connect to MongoDB ----
-mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/lifesim', {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-});
-const db = mongoose.connection;
-db.on('error', (error) => console.error(error));
-db.once('open', () => console.log('MongoDB connected'));
+// ---- Connect to MongoDB Atlas ----
+mongoose.connect(process.env.MONGODB_URI)
+  .then(() => console.log('MongoDB connected'))
+  .catch((err) => {
+    console.error('MongoDB connection error:', err);
+    process.exit(1); // Fail fast if DB can't connect
+  });
 
 // ---- SCHEMAS ----
-
 const npcEventLogSchema = new mongoose.Schema({
   npcId: { type: String, required: true },
   timestamp: { type: Date, default: Date.now },
@@ -84,6 +82,11 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// ---- Friendly root endpoint for testing ----
+app.get('/', (req, res) => {
+  res.json({ status: 'Server is running!', time: new Date().toISOString() });
+});
+
 // ---- HELPERS ----
 function getFormattedTime(date = new Date()) {
   const dayNames = [
@@ -135,8 +138,6 @@ app.post('/api/gpt-precheck', async (req, res) => {
           errors.push(`NPC ${npc.name} is missing current mood.`);
       });
     }
-
-    // You can add further custom logic checks here
 
     if (errors.length === 0) {
       summary = "State and story logic are consistent. All rules and guidelines satisfied.";
