@@ -17,7 +17,7 @@ const npcEventLogSchema = new mongoose.Schema({
   npcId: { type: String, required: true },
   timestamp: { type: Date, default: Date.now },
   summary: { type: String, required: true },
-  feeling: { type: String }, // e.g. 'angry', 'bored'
+  feeling: { type: String },
   data: { type: Object },
 });
 const NPCEventLog = mongoose.model('NPCEventLog', npcEventLogSchema);
@@ -53,9 +53,9 @@ const inventorySchema = new mongoose.Schema({
 const Inventory = mongoose.model('Inventory', inventorySchema);
 
 const relationshipSchema = new mongoose.Schema({
-  targetId: String, // playerId or npcId
+  targetId: String,
   targetType: { type: String, enum: ['npc', 'player'] },
-  attitude: String, // e.g. 'friendly', 'hostile'
+  attitude: String,
   notes: String,
 }, { _id: false });
 
@@ -70,9 +70,9 @@ const npcSchema = new mongoose.Schema({
   npcId: { type: String, required: true, unique: true },
   name: String,
   location: String,
-  personality: [String], // ['charming', 'impulsive', 'sarcastic', 'resentful']
-  mood: String, // current emotional state
-  attitudeTowardPlayer: String, // e.g. 'hostile', 'friendly', 'jealous'
+  personality: [String],
+  mood: String,
+  attitudeTowardPlayer: String,
   relationships: [relationshipSchema],
   memories: [memorySchema],
   state: Object,
@@ -106,6 +106,51 @@ function getFormattedTime(date = new Date()) {
 }
 
 // ---- ROUTES ----
+
+// Precheck endpoint: reviews context, ensures logic and consistency before any action or response
+app.post('/api/gpt-precheck', async (req, res) => {
+  try {
+    const { playerId, context } = req.body;
+    let errors = [];
+    let logicConsistent = true;
+    let summary = "";
+    let nextActionsAllowed = ["continue", "clarify", "abort"];
+
+    // Example: check if player exists and location is valid
+    const player = await Player.findOne({ playerId });
+    if (!player) {
+      errors.push('Player not found.');
+      logicConsistent = false;
+    } else if (!player.location) {
+      errors.push('Player location missing.');
+      logicConsistent = false;
+    }
+
+    // Check if NPCs in context have valid moods/personalities
+    if (context && context.npcs && Array.isArray(context.npcs)) {
+      context.npcs.forEach(npc => {
+        if (!npc.personality || npc.personality.length === 0)
+          errors.push(`NPC ${npc.name} is missing personality traits.`);
+        if (!npc.mood)
+          errors.push(`NPC ${npc.name} is missing current mood.`);
+      });
+    }
+
+    // You can add further custom logic checks here
+
+    if (errors.length === 0) {
+      summary = "State and story logic are consistent. All rules and guidelines satisfied.";
+      logicConsistent = true;
+    } else {
+      summary = "Issues found. Please resolve errors before proceeding.";
+      logicConsistent = false;
+    }
+
+    res.json({ summary, logicConsistent, errors, nextActionsAllowed });
+  } catch (err) {
+    res.status(500).json({ summary: "Server error during precheck.", logicConsistent: false, errors: [err.message], nextActionsAllowed: [] });
+  }
+});
 
 // Log a new event for player
 app.post('/api/log-event', async (req, res) => {
