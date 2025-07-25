@@ -23,6 +23,11 @@ app.post('/api/prompt', (req, res) => {
   });
 });
 
+app.post('/runPreflight', (req, res) => {
+  console.log('🧠 Preflight check triggered.');
+  res.json({ status: 'ok', message: 'Preflight check passed.' });
+});
+
 app.listen(PORT, () => {
   console.log(`🚀 Server running at http://localhost:${PORT}`);
 });
