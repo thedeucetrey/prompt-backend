@@ -1,3 +1,4 @@
+// index.js
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -21,19 +22,25 @@ const eventLogSchema = new mongoose.Schema({
 });
 const EventLog = mongoose.model('EventLog', eventLogSchema);
 
-// Example schemas for demo; expand as needed!
 const playerSchema = new mongoose.Schema({
   playerId: { type: String, required: true, unique: true },
   name: String,
-  age: Number,
   location: String,
-  stats: Object, // e.g. { health: 90, energy: 40 }
+  stats: {
+    money: { type: Number, default: 0 },
+    // add more stats as needed
+  },
 });
 const Player = mongoose.model('Player', playerSchema);
 
 const inventorySchema = new mongoose.Schema({
   playerId: { type: String, required: true },
-  items: [Object], // e.g. [{ name: 'Coffee', amount: 1 }]
+  items: [
+    {
+      name: String,
+      amount: Number,
+    },
+  ],
 });
 const Inventory = mongoose.model('Inventory', inventorySchema);
 
@@ -49,6 +56,27 @@ const NPC = mongoose.model('NPC', npcSchema);
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// ---- HELPERS ----
+function getFormattedTime(date = new Date()) {
+  const dayNames = [
+    "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"
+  ];
+  const monthNames = [
+    "January", "February", "March", "April", "May", "June", "July",
+    "August", "September", "October", "November", "December"
+  ];
+  const dayOfWeek = dayNames[date.getDay()];
+  const day = date.getDate();
+  const month = monthNames[date.getMonth()];
+  const year = date.getFullYear();
+  let hour = date.getHours();
+  const ampm = hour >= 12 ? 'pm' : 'am';
+  hour = hour % 12;
+  if (hour === 0) hour = 12;
+  const minute = date.getMinutes().toString().padStart(2, '0');
+  return `${dayOfWeek}, ${day} ${month}, ${year}, ${hour}:${minute} ${ampm}`;
+}
 
 // ---- ROUTES ----
 
@@ -76,17 +104,27 @@ app.get('/api/event-log/:playerId', async (req, res) => {
   }
 });
 
-// Get full player state (expand as needed)
+// Get full player state, including formatted time, location, and money
 app.get('/api/player-state/:playerId', async (req, res) => {
   try {
     const { playerId } = req.params;
     const player = await Player.findOne({ playerId });
+    if (!player) return res.status(404).json({ error: 'Player not found' });
     const inventory = await Inventory.findOne({ playerId });
-    const npcs = await NPC.find({ location: player?.location });
+    const npcs = await NPC.find({ location: player.location });
+    const currentTime = getFormattedTime();
     res.json({
-      player,
+      player: {
+        playerId: player.playerId,
+        name: player.name,
+        location: player.location,
+        stats: {
+          money: player.stats.money
+        }
+      },
       inventory: inventory?.items || [],
       npcs: npcs || [],
+      currentTime
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -96,3 +134,4 @@ app.get('/api/player-state/:playerId', async (req, res) => {
 // ---- Start Server ----
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
