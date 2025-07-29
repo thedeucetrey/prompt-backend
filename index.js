@@ -1,16 +1,15 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
+const { parseISO, add } = require('date-fns');
 
-// ---- Connect to MongoDB Atlas ----
 mongoose.connect(process.env.MONGODB_URI)
   .then(() => console.log('MongoDB connected'))
   .catch((err) => {
     console.error('MongoDB connection error:', err);
-    process.exit(1); // Fail fast if DB can't connect
+    process.exit(1);
   });
 
-// ---- SCHEMAS ----
 const npcEventLogSchema = new mongoose.Schema({
   npcId: { type: String, required: true },
   timestamp: { type: Date, default: Date.now },
@@ -25,7 +24,9 @@ const eventLogSchema = new mongoose.Schema({
   timestamp: { type: Date, default: Date.now },
   type: { type: String, required: true },
   summary: { type: String, required: true },
+  feeling: { type: String },
   data: { type: Object },
+  requiresPlayerInput: { type: Boolean },
 });
 const EventLog = mongoose.model('EventLog', eventLogSchema);
 
@@ -77,25 +78,18 @@ const npcSchema = new mongoose.Schema({
 });
 const NPC = mongoose.model('NPC', npcSchema);
 
-// ---- EXPRESS SETUP ----
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// ---- Friendly root endpoint for testing ----
 app.get('/', (req, res) => {
   res.json({ status: 'Server is running!', time: new Date().toISOString() });
 });
 
-// ---- HELPERS ----
 function getFormattedTime(date = new Date()) {
-  const dayNames = [
-    "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"
-  ];
-  const monthNames = [
-    "January", "February", "March", "April", "May", "June", "July",
-    "August", "September", "October", "November", "December"
-  ];
+  const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  const monthNames = ["January", "February", "March", "April", "May", "June", "July",
+    "August", "September", "October", "November", "December"];
   const dayOfWeek = dayNames[date.getDay()];
   const day = date.getDate();
   const month = monthNames[date.getMonth()];
@@ -108,197 +102,73 @@ function getFormattedTime(date = new Date()) {
   return `${dayOfWeek}, ${day} ${month}, ${year}, ${hour}:${minute} ${ampm}`;
 }
 
-// ---- ROUTES ----
-
-// Precheck endpoint
-app.post('/api/gpt-precheck', async (req, res) => {
+function applyTimeDelta(base, deltaStr) {
   try {
-    const { playerId, context } = req.body;
-    let errors = [];
-    let logicConsistent = true;
-    let summary = "";
-    let nextActionsAllowed = ["continue", "clarify", "abort"];
-    const player = await Player.findOne({ playerId });
-    if (!player) {
-      errors.push('Player not found.');
-      logicConsistent = false;
-    } else if (!player.location) {
-      errors.push('Player location missing.');
-      logicConsistent = false;
-    }
-    if (context && context.npcs && Array.isArray(context.npcs)) {
-      context.npcs.forEach(npc => {
-        if (!npc.personality || npc.personality.length === 0)
-          errors.push(`NPC ${npc.name} is missing personality traits.`);
-        if (!npc.mood)
-          errors.push(`NPC ${npc.name} is missing current mood.`);
-      });
-    }
-    if (errors.length === 0) {
-      summary = "State and story logic are consistent. All rules and guidelines satisfied.";
-      logicConsistent = true;
-    } else {
-      summary = "Issues found. Please resolve errors before proceeding.";
-      logicConsistent = false;
-    }
-    res.json({ summary, logicConsistent, errors, nextActionsAllowed });
-  } catch (err) {
-    res.status(500).json({ summary: "Server error during precheck.", logicConsistent: false, errors: [err.message], nextActionsAllowed: [] });
+    const duration = deltaStr.match(/P.*T.*/g) ? parseISO(`1970-01-01T00:00:00${deltaStr}`) : null;
+    return duration ? add(base, duration) : base;
+  } catch {
+    return base;
   }
-});
+}
 
-// ---- PLAYER CRUD ----
-app.post('/api/player', async (req, res) => {
+app.post('/api/log-batch-events', async (req, res) => {
   try {
-    const player = await Player.create(req.body);
-    res.json(player);
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
-app.get('/api/player/:playerId', async (req, res) => {
-  try {
-    const player = await Player.findOne({ playerId: req.params.playerId });
-    if (!player) return res.status(404).json({ error: 'Player not found' });
-    res.json(player);
+    const { events } = req.body;
+    if (!Array.isArray(events)) return res.status(400).json({ error: 'Invalid events array' });
+    const results = [];
+    for (const event of events) {
+      const { entityType, entityId, summary, feeling, data, timeDelta, requiresPlayerInput } = event;
+      const timestamp = applyTimeDelta(new Date(), timeDelta);
+      if (entityType === 'player') {
+        const log = await EventLog.create({ playerId: entityId, type: 'event', summary, feeling, data, requiresPlayerInput, timestamp });
+        results.push(log);
+      } else if (entityType === 'npc') {
+        const log = await NPCEventLog.create({ npcId: entityId, summary, feeling, data, timestamp });
+        await NPC.updateOne({ npcId: entityId }, { $push: { memories: { summary, feeling, data, timestamp } } });
+        results.push(log);
+      }
+    }
+    res.json({ success: true, logs: results });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
-app.patch('/api/player/:playerId', async (req, res) => {
-  try {
-    const player = await Player.findOneAndUpdate({ playerId: req.params.playerId }, req.body, { new: true });
-    if (!player) return res.status(404).json({ error: 'Player not found' });
-    res.json(player);
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
-app.delete('/api/player/:playerId', async (req, res) => {
-  try {
-    const player = await Player.findOneAndDelete({ playerId: req.params.playerId });
-    if (!player) return res.status(404).json({ error: 'Player not found' });
-    res.json({ success: true });
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
 
-// ---- NPC CRUD ----
-app.post('/api/npc', async (req, res) => {
-  try {
-    const npc = await NPC.create(req.body);
-    res.json(npc);
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
-app.get('/api/npc/:npcId', async (req, res) => {
-  try {
-    const npc = await NPC.findOne({ npcId: req.params.npcId });
-    if (!npc) return res.status(404).json({ error: 'NPC not found' });
-    res.json(npc);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
 app.patch('/api/npc/:npcId', async (req, res) => {
   try {
-    const npc = await NPC.findOneAndUpdate({ npcId: req.params.npcId }, req.body, { new: true });
+    const { syncFromLogs, ...updateData } = req.body;
+    const npc = await NPC.findOneAndUpdate({ npcId: req.params.npcId }, updateData, { new: true });
     if (!npc) return res.status(404).json({ error: 'NPC not found' });
+    if (syncFromLogs) {
+      const logs = await NPCEventLog.find({ npcId: req.params.npcId }).sort({ timestamp: -1 }).limit(5);
+      if (logs.length > 0) npc.mood = logs[0].feeling;
+      await npc.save();
+    }
     res.json(npc);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 });
-app.delete('/api/npc/:npcId', async (req, res) => {
+
+app.patch('/api/player/:playerId', async (req, res) => {
   try {
-    const npc = await NPC.findOneAndDelete({ npcId: req.params.npcId });
-    if (!npc) return res.status(404).json({ error: 'NPC not found' });
-    res.json({ success: true });
+    const { syncFromLogs, ...updateData } = req.body;
+    const player = await Player.findOneAndUpdate({ playerId: req.params.playerId }, updateData, { new: true });
+    if (!player) return res.status(404).json({ error: 'Player not found' });
+    if (syncFromLogs) {
+      const logs = await EventLog.find({ playerId: req.params.playerId }).sort({ timestamp: -1 }).limit(5);
+      if (logs.length > 0 && logs[0].data?.moneyChange) {
+        player.stats.money += logs[0].data.moneyChange;
+        await player.save();
+      }
+    }
+    res.json(player);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 });
 
-// ---- LOGGING & STATE ----
+// You can retain your original routes here...
 
-// Log a new event for player
-app.post('/api/log-event', async (req, res) => {
-  try {
-    const { playerId, type, summary, data } = req.body;
-    if (!playerId || !type || !summary) return res.status(400).json({ error: 'Missing data' });
-    const log = await EventLog.create({ playerId, type, summary, data });
-    res.json({ success: true, log });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-// Log a new event for NPC
-app.post('/api/log-npc-event', async (req, res) => {
-  try {
-    const { npcId, summary, feeling, data } = req.body;
-    if (!npcId || !summary) return res.status(400).json({ error: 'Missing data' });
-    const log = await NPCEventLog.create({ npcId, summary, feeling, data });
-    await NPC.updateOne(
-      { npcId },
-      { $push: { memories: { summary, feeling, data, timestamp: new Date() } } }
-    );
-    res.json({ success: true, log });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Get recent event logs for a player
-app.get('/api/event-log/:playerId', async (req, res) => {
-  try {
-    const { playerId } = req.params;
-    const limit = parseInt(req.query.limit) || 10;
-    const logs = await EventLog.find({ playerId }).sort({ timestamp: -1 }).limit(limit);
-    res.json({ logs: logs.reverse() });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Get recent event logs for an NPC
-app.get('/api/npc-event-log/:npcId', async (req, res) => {
-  try {
-    const { npcId } = req.params;
-    const limit = parseInt(req.query.limit) || 10;
-    const logs = await NPCEventLog.find({ npcId }).sort({ timestamp: -1 }).limit(limit);
-    res.json({ logs: logs.reverse() });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Get full player state, including visible NPCs and formatted time
-app.get('/api/player-state/:playerId', async (req, res) => {
-  try {
-    const { playerId } = req.params;
-    const player = await Player.findOne({ playerId });
-    if (!player) return res.status(404).json({ error: 'Player not found' });
-    const inventory = await Inventory.findOne({ playerId });
-    const npcs = await NPC.find({ location: player.location });
-    const currentTime = getFormattedTime();
-    res.json({
-      player: {
-        playerId: player.playerId,
-        name: player.name,
-        location: player.location,
-        stats: { money: player.stats.money }
-      },
-      inventory: inventory?.items || [],
-      npcs: npcs || [],
-      currentTime
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ---- Start Server ----
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
