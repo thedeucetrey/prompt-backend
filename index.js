@@ -2,7 +2,6 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
-<<<<<<< HEAD
 const { parseISO, add } = require('date-fns');
 
 mongoose.connect(process.env.MONGODB_URI)
