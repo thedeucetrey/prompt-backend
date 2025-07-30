@@ -34,6 +34,8 @@ const eventLogSchema = new mongoose.Schema({
   feeling: String,
   data: Object,
   requiresPlayerInput: Boolean,
+  nextTrigger: String,
+  urgency: { type: Number, default: 0 },
 });
 const EventLog = mongoose.model('EventLog', eventLogSchema);
 
@@ -50,6 +52,9 @@ const relationshipSchema = new mongoose.Schema({
   targetId: String,
   targetType: { type: String, enum: ['npc', 'player'] },
   attitude: String,
+  publicAttitude: String,
+  privateAttitude: String,
+  revealed: { type: Boolean, default: false },
   notes: String,
 }, { _id: false });
 
@@ -58,6 +63,7 @@ const memorySchema = new mongoose.Schema({
   summary: String,
   feeling: String,
   data: Object,
+  intensity: { type: Number, default: 50 },
 }, { _id: false });
 
 const npcSchema = new mongoose.Schema({
@@ -67,6 +73,8 @@ const npcSchema = new mongoose.Schema({
   personality: [String],
   mood: String,
   attitudeTowardPlayer: String,
+  conflictLevel: { type: Number, default: 0 },
+  lastConflictWithPlayer: Date,
   relationships: [relationshipSchema],
   memories: [memorySchema],
   state: Object,
@@ -86,7 +94,6 @@ mongoose.connect(process.env.MONGODB_URI, { useNewUrlParser: true, useUnifiedTop
 
 app.get('/', (req, res) => res.json({ status: 'Server is running!', time: new Date().toISOString() }));
 
-// GPT Precheck with drama detection
 app.post('/api/gpt-precheck', async (req, res) => {
   const { playerId } = req.body;
   if (!playerId) {
@@ -108,12 +115,14 @@ app.post('/api/gpt-precheck', async (req, res) => {
       npc.attitudeTowardPlayer && !['friendly', 'neutral'].includes(npc.attitudeTowardPlayer)
     );
 
+    const highConflictNPCs = npcs.filter(npc => npc.conflictLevel >= 50);
+
     const dramaLogs = logs.filter(log =>
       /argue|tension|refuse|yelled|betray|fight|secret/.test(log.summary.toLowerCase()) ||
-      log.feeling === 'tense'
+      log.feeling === 'tense' || log.urgency > 70
     );
 
-    const dramaPresent = hostileNPCs.length > 0 || dramaLogs.length > 0;
+    const dramaPresent = hostileNPCs.length > 0 || dramaLogs.length > 0 || highConflictNPCs.length > 0;
     const errors = [];
 
     if (!dramaPresent) {
@@ -138,7 +147,6 @@ app.post('/api/gpt-precheck', async (req, res) => {
   }
 });
 
-// Create Player
 app.post('/api/player', async (req, res) => {
   try {
     const { playerId, name, location, stats } = req.body;
@@ -150,7 +158,6 @@ app.post('/api/player', async (req, res) => {
   }
 });
 
-// Get Player
 app.get('/api/player/:playerId', async (req, res) => {
   try {
     const player = await Player.findOne({ playerId: req.params.playerId });
@@ -161,7 +168,6 @@ app.get('/api/player/:playerId', async (req, res) => {
   }
 });
 
-// Update Player
 app.patch('/api/player/:playerId', async (req, res) => {
   try {
     const player = await Player.findOneAndUpdate({ playerId: req.params.playerId }, req.body, { new: true });
@@ -172,19 +178,17 @@ app.patch('/api/player/:playerId', async (req, res) => {
   }
 });
 
-// Create NPC
 app.post('/api/npc', async (req, res) => {
   try {
-    const { npcId, name, location, personality, mood, attitudeTowardPlayer, relationships, memories, state } = req.body;
+    const { npcId, name, location, personality, mood, attitudeTowardPlayer, conflictLevel, lastConflictWithPlayer, relationships, memories, state } = req.body;
     if (!npcId) return res.status(400).json({ error: 'npcId required' });
-    const npc = await NPC.create({ npcId, name, location, personality, mood, attitudeTowardPlayer, relationships, memories, state });
+    const npc = await NPC.create({ npcId, name, location, personality, mood, attitudeTowardPlayer, conflictLevel, lastConflictWithPlayer, relationships, memories, state });
     res.json(npc);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 });
 
-// Get NPC
 app.get('/api/npc/:npcId', async (req, res) => {
   try {
     const npc = await NPC.findOne({ npcId: req.params.npcId });
@@ -195,7 +199,6 @@ app.get('/api/npc/:npcId', async (req, res) => {
   }
 });
 
-// Update NPC
 app.patch('/api/npc/:npcId', async (req, res) => {
   try {
     const npc = await NPC.findOneAndUpdate({ npcId: req.params.npcId }, req.body, { new: true });
@@ -206,12 +209,11 @@ app.patch('/api/npc/:npcId', async (req, res) => {
   }
 });
 
-// Player Event Log
 app.post('/api/log-event', async (req, res) => {
   try {
-    const { playerId, type, summary, feeling, data, requiresPlayerInput } = req.body;
+    const { playerId, type, summary, feeling, data, requiresPlayerInput, nextTrigger, urgency } = req.body;
     if (!playerId || !type || !summary) return res.status(400).json({ error: 'playerId, type, and summary required' });
-    const log = await EventLog.create({ playerId, type, summary, feeling, data, requiresPlayerInput });
+    const log = await EventLog.create({ playerId, type, summary, feeling, data, requiresPlayerInput, nextTrigger, urgency });
     res.json(log);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -227,7 +229,6 @@ app.get('/api/log-event/:playerId', async (req, res) => {
   }
 });
 
-// NPC Event Log
 app.post('/api/log-npc-event', async (req, res) => {
   try {
     const { npcId, summary, feeling, data } = req.body;
@@ -240,7 +241,6 @@ app.post('/api/log-npc-event', async (req, res) => {
   }
 });
 
-// Inventory Routes
 app.post('/api/inventory', async (req, res) => {
   try {
     const { playerId, items } = req.body;
@@ -261,7 +261,6 @@ app.get('/api/inventory/:playerId', async (req, res) => {
   }
 });
 
-// Batch Event Log
 app.post('/api/log-batch-events', async (req, res) => {
   try {
     const { events } = req.body;
@@ -269,7 +268,7 @@ app.post('/api/log-batch-events', async (req, res) => {
     const results = [];
     for (const event of events) {
       if (event.entityType === 'player') {
-        const log = await EventLog.create({ playerId: event.entityId, type: 'event', summary: event.summary, feeling: event.feeling, data: event.data, requiresPlayerInput: event.requiresPlayerInput });
+        const log = await EventLog.create({ playerId: event.entityId, type: 'event', summary: event.summary, feeling: event.feeling, data: event.data, requiresPlayerInput: event.requiresPlayerInput, nextTrigger: event.nextTrigger, urgency: event.urgency });
         results.push(log);
       } else if (event.entityType === 'npc') {
         const log = await NPCEventLog.create({ npcId: event.entityId, summary: event.summary, feeling: event.feeling, data: event.data });
