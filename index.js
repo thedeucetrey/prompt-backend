@@ -10,7 +10,6 @@ app.use(express.json());
 
 // -------------------- Mongoose Schemas ---------------------
 
-// Player
 const playerSchema = new mongoose.Schema({
   playerId: { type: String, required: true, unique: true },
   name: String,
@@ -21,14 +20,12 @@ const playerSchema = new mongoose.Schema({
 });
 const Player = mongoose.model('Player', playerSchema);
 
-// Inventory
 const inventorySchema = new mongoose.Schema({
   playerId: { type: String, required: true, unique: true },
   items: [{ name: String, amount: Number }],
 });
 const Inventory = mongoose.model('Inventory', inventorySchema);
 
-// Event Log
 const eventLogSchema = new mongoose.Schema({
   playerId: { type: String, required: true },
   timestamp: { type: Date, default: Date.now },
@@ -40,7 +37,6 @@ const eventLogSchema = new mongoose.Schema({
 });
 const EventLog = mongoose.model('EventLog', eventLogSchema);
 
-// NPC Event Log
 const npcEventLogSchema = new mongoose.Schema({
   npcId: { type: String, required: true },
   timestamp: { type: Date, default: Date.now },
@@ -50,7 +46,6 @@ const npcEventLogSchema = new mongoose.Schema({
 });
 const NPCEventLog = mongoose.model('NPCEventLog', npcEventLogSchema);
 
-// NPC
 const relationshipSchema = new mongoose.Schema({
   targetId: String,
   targetType: { type: String, enum: ['npc', 'player'] },
@@ -89,10 +84,59 @@ mongoose.connect(process.env.MONGODB_URI, { useNewUrlParser: true, useUnifiedTop
 
 // ------------------- Routes ----------------------
 
-// Root
 app.get('/', (req, res) => res.json({ status: 'Server is running!', time: new Date().toISOString() }));
 
-// ----------- PLAYER ROUTES -----------
+// GPT Precheck with drama detection
+app.post('/api/gpt-precheck', async (req, res) => {
+  const { playerId } = req.body;
+  if (!playerId) {
+    return res.status(400).json({
+      summary: 'Missing playerId',
+      logicConsistent: false,
+      errors: ['playerId is required'],
+      nextActionsAllowed: [],
+      dramaPresent: false
+    });
+  }
+
+  try {
+    const player = await Player.findOne({ playerId });
+    const npcs = await NPC.find({});
+    const logs = await EventLog.find({ playerId }).sort({ timestamp: -1 }).limit(20);
+
+    const hostileNPCs = npcs.filter(npc =>
+      npc.attitudeTowardPlayer && !['friendly', 'neutral'].includes(npc.attitudeTowardPlayer)
+    );
+
+    const dramaLogs = logs.filter(log =>
+      /argue|tension|refuse|yelled|betray|fight|secret/.test(log.summary.toLowerCase()) ||
+      log.feeling === 'tense'
+    );
+
+    const dramaPresent = hostileNPCs.length > 0 || dramaLogs.length > 0;
+    const errors = [];
+
+    if (!dramaPresent) {
+      errors.push('No dramatic conflict detected. NPCs should express independence, tension, or rivalry.');
+    }
+
+    res.json({
+      summary: 'Precheck completed',
+      logicConsistent: true,
+      errors,
+      nextActionsAllowed: [],
+      dramaPresent
+    });
+  } catch (err) {
+    res.status(500).json({
+      summary: 'Server error',
+      logicConsistent: false,
+      errors: [err.message],
+      nextActionsAllowed: [],
+      dramaPresent: false
+    });
+  }
+});
 
 // Create Player
 app.post('/api/player', async (req, res) => {
@@ -128,8 +172,6 @@ app.patch('/api/player/:playerId', async (req, res) => {
   }
 });
 
-// ----------- NPC ROUTES -----------
-
 // Create NPC
 app.post('/api/npc', async (req, res) => {
   try {
@@ -163,8 +205,6 @@ app.patch('/api/npc/:npcId', async (req, res) => {
     res.status(400).json({ error: err.message });
   }
 });
-
-// ----------- EVENT LOG ROUTES -----------
 
 // Player Event Log
 app.post('/api/log-event', async (req, res) => {
@@ -200,9 +240,7 @@ app.post('/api/log-npc-event', async (req, res) => {
   }
 });
 
-// ----------- INVENTORY ROUTES -----------
-
-// Create/Update Inventory for Player
+// Inventory Routes
 app.post('/api/inventory', async (req, res) => {
   try {
     const { playerId, items } = req.body;
@@ -214,7 +252,6 @@ app.post('/api/inventory', async (req, res) => {
   }
 });
 
-// Get Inventory
 app.get('/api/inventory/:playerId', async (req, res) => {
   try {
     const inv = await Inventory.findOne({ playerId: req.params.playerId });
@@ -224,9 +261,7 @@ app.get('/api/inventory/:playerId', async (req, res) => {
   }
 });
 
-// ----------- BATCH EVENTS (Advanced / Optional) -----------
-
-// Batch Logging (Player/NPC)
+// Batch Event Log
 app.post('/api/log-batch-events', async (req, res) => {
   try {
     const { events } = req.body;
