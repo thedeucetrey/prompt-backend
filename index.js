@@ -94,10 +94,7 @@ mongoose.connect(process.env.MONGODB_URI, { useNewUrlParser: true, useUnifiedTop
 
 // ------------------- Helper: Simulate Real Person Lookup ---------------------
 
-// This is a stub function to simulate looking up a real person by name.
-// In a real implementation, you might query an external API or database.
 async function findRealPersonByName(name) {
-  // Example simple hardcoded matches
   const realPeople = {
     'danny devito': {
       description: 'American actor known for roles in film and television.',
@@ -115,11 +112,78 @@ async function findRealPersonByName(name) {
   return realPeople[key] || null;
 }
 
+// ------------------- Literary References Database ---------------------
+
+const literaryReferences = {
+  substance_abuse: [
+    'Rules of Attraction - Bret Easton Ellis',
+    'Bright Lights, Big City - Jay McInerney',
+    'Requiem for a Dream - Hubert Selby Jr.',
+    'Trainspotting - Irvine Welsh',
+  ],
+  romance: [
+    'You - Caroline Kepnes',
+    'House of Holes - Nicholson Baker',
+    'Fifty Shades of Grey - E.L. James',
+    'The Time Traveler’s Wife - Audrey Niffenegger',
+  ],
+  science_fiction: [
+    'Ready Player One - Ernest Cline',
+    'Ender’s Game - Orson Scott Card',
+    'Neuromancer - William Gibson',
+    'The Left Hand of Darkness - Ursula K. Le Guin',
+  ],
+  mental_health: [
+    'The Bell Jar - Sylvia Plath',
+    'Prozac Nation - Elizabeth Wurtzel',
+    'Girl, Interrupted - Susanna Kaysen',
+    'An Unquiet Mind - Kay Redfield Jamison',
+  ],
+  violence: [
+    'No Country for Old Men - Cormac McCarthy',
+    'The Girl with the Dragon Tattoo - Stieg Larsson',
+    'The Godfather - Mario Puzo',
+    'American Psycho - Bret Easton Ellis',
+  ],
+  tragedy: [
+    'A Little Life - Hanya Yanagihara',
+    'The Road - Cormac McCarthy',
+    'Extremely Loud & Incredibly Close - Jonathan Safran Foer',
+    'Of Mice and Men - John Steinbeck',
+  ],
+  mystery: [
+    'Gone Girl - Gillian Flynn',
+    'Sherlock Holmes series - Arthur Conan Doyle',
+    'The Silent Patient - Alex Michaelides',
+    'Big Little Lies - Liane Moriarty',
+  ],
+  historical_drama: [
+    'Wolf Hall - Hilary Mantel',
+    'The Other Boleyn Girl - Philippa Gregory',
+    'All the Light We Cannot See - Anthony Doerr',
+    'The Pillars of the Earth - Ken Follett',
+  ],
+  family: [
+    'Little Fires Everywhere - Celeste Ng',
+    'The Corrections - Jonathan Franzen',
+    'East of Eden - John Steinbeck',
+  ],
+  personal_growth: [
+    'The Alchemist - Paulo Coelho',
+    'Eat, Pray, Love - Elizabeth Gilbert',
+    'Wild - Cheryl Strayed',
+  ],
+  comedy: [
+    'Catch-22 - Joseph Heller',
+    'The Hitchhiker’s Guide to the Galaxy - Douglas Adams',
+    'Good Omens - Neil Gaiman & Terry Pratchett',
+  ],
+};
+
 // ------------------- Routes ----------------------
 
 app.get('/', (req, res) => res.json({ status: 'Server is running!', time: new Date().toISOString() }));
 
-// Precheck route enhanced
 app.post('/api/gpt-precheck', async (req, res) => {
   const { playerId, context, latestEntry } = req.body;
   if (!playerId) {
@@ -143,7 +207,6 @@ app.post('/api/gpt-precheck', async (req, res) => {
 
     let errors = [];
 
-    // 1. Check if latest entry advances the story
     const storyAdvancing = (() => {
       if (!latestEntry || !latestEntry.summary) return false;
       const recentSummaries = logs.slice(0, 5).map(l => l.summary.toLowerCase());
@@ -152,7 +215,6 @@ app.post('/api/gpt-precheck', async (req, res) => {
 
     if (!storyAdvancing) errors.push('The latest story entry does not advance the story.');
 
-    // 2. Check NPC individuality and info scope
     const npcIndividualityMaintained = (() => {
       for (const npc of npcs) {
         if (!npc.personality || npc.personality.length === 0) return false;
@@ -167,7 +229,6 @@ app.post('/api/gpt-precheck', async (req, res) => {
 
     if (!npcIndividualityMaintained) errors.push('NPC individuality or knowledge boundaries are not maintained.');
 
-    // 3. Detect new characters in latestEntry
     const existingNpcIds = new Set(npcs.map(n => n.npcId));
     const newCharactersDetected = (() => {
       if (!latestEntry || !latestEntry.data || !latestEntry.data.characterIds) return false;
@@ -180,13 +241,9 @@ app.post('/api/gpt-precheck', async (req, res) => {
     })();
 
     if (newCharactersDetected) {
-      // Here you might trigger automatic NPC creation or notify the system to do so.
-      // For example:
-      // await autoCreateNewNPCs(latestEntry.data.characterIds, existingNpcIds);
-      // This logic is left as a stub for future integration.
+      // Future place to trigger auto NPC creation logic if desired
     }
 
-    // 4. Drama and conflict detection (positive and negative)
     const hostileNPCs = npcs.filter(npc =>
       npc.attitudeTowardPlayer && !['friendly', 'neutral'].includes(npc.attitudeTowardPlayer)
     );
@@ -200,7 +257,6 @@ app.post('/api/gpt-precheck', async (req, res) => {
 
     if (!dramaPresent) errors.push('No dramatic conflict or positive drama detected.');
 
-    // 5. Adherence to instructions - simplified validation
     const instructionsAdhered = (() => {
       if (!playerId || !context) return false;
       if (!latestEntry || !latestEntry.summary) return false;
@@ -236,7 +292,6 @@ app.post('/api/gpt-precheck', async (req, res) => {
   }
 });
 
-// New endpoint to create a detailed NPC character profile
 app.post('/api/npc/create-character', async (req, res) => {
   const { npcId, name, description, details, bio, isHistorical = false } = req.body;
 
@@ -250,7 +305,6 @@ app.post('/api/npc/create-character', async (req, res) => {
     let finalBio = bio;
 
     if (isHistorical) {
-      // Attempt to find real person data
       const realPersonData = await findRealPersonByName(name);
       if (realPersonData) {
         finalDescription = realPersonData.description;
@@ -259,7 +313,6 @@ app.post('/api/npc/create-character', async (req, res) => {
       }
     }
 
-    // Check if NPC already exists
     let npc = await NPC.findOne({ npcId });
     if (npc) {
       return res.status(400).json({ error: 'NPC with this npcId already exists.' });
@@ -284,7 +337,6 @@ app.post('/api/npc/create-character', async (req, res) => {
 
     await npc.save();
 
-    // Log NPC creation event
     await NPCEventLog.create({
       npcId,
       summary: `NPC ${name} created with detailed profile.`,
@@ -298,7 +350,66 @@ app.post('/api/npc/create-character', async (req, res) => {
   }
 });
 
-// Remaining original routes unchanged (player, npc, event logs, inventory, etc.)
+app.post('/api/story/references', (req, res) => {
+  const { description, tags = [] } = req.body;
+
+  if (!description) {
+    return res.status(400).json({ error: 'Scene description is required.' });
+  }
+
+  // Normalize tags to lowercase and replace spaces with underscores for matching
+  const normalizedTags = tags.map(tag => tag.toLowerCase().replace(/\s+/g, '_'));
+
+  // Collect references for each tag found in the library
+  const references = [];
+
+  const addedThemes = new Set();
+
+  normalizedTags.forEach(tag => {
+    if (literaryReferences[tag]) {
+      references.push({
+        theme: tag,
+        works: literaryReferences[tag],
+      });
+      addedThemes.add(tag);
+    }
+  });
+
+  // If no tags matched or no tags provided, try basic keyword detection in description
+  if (references.length === 0) {
+    const lowerDesc = description.toLowerCase();
+    for (const [theme, works] of Object.entries(literaryReferences)) {
+      // Simple keyword triggers for themes
+      const keywordsMap = {
+        substance_abuse: ['addict', 'drugs', 'alcohol', 'rehab', 'sobriety'],
+        romance: ['love', 'intimacy', 'romance', 'affair', 'relationship'],
+        science_fiction: ['space', 'alien', 'future', 'robot', 'cyberpunk'],
+        mental_health: ['depression', 'anxiety', 'psychosis', 'therapy', 'mental'],
+        violence: ['fight', 'murder', 'attack', 'war', 'blood'],
+        tragedy: ['death', 'loss', 'grief', 'tragedy', 'funeral'],
+        mystery: ['murder', 'investigation', 'mystery', 'secret', 'detective'],
+        historical_drama: ['king', 'queen', 'empire', 'battle', 'history'],
+        family: ['family', 'parent', 'child', 'siblings', 'home'],
+        personal_growth: ['journey', 'growth', 'redemption', 'change', 'self'],
+        comedy: ['funny', 'humor', 'satire', 'joke', 'parody'],
+      };
+      const keywords = keywordsMap[theme];
+      if (keywords.some(kw => lowerDesc.includes(kw))) {
+        if (!addedThemes.has(theme)) {
+          references.push({
+            theme,
+            works,
+          });
+          addedThemes.add(theme);
+        }
+      }
+    }
+  }
+
+  res.json({ references });
+});
+
+// Remaining routes (player, npc, event logs, inventory) unchanged
 
 app.post('/api/player', async (req, res) => {
   try {
@@ -438,5 +549,3 @@ app.post('/api/log-batch-events', async (req, res) => {
 // ------------------- Start Server -----------------------
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-
-
