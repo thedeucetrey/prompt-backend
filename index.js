@@ -1,4 +1,3 @@
-// backend/index.js
 require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
@@ -95,54 +94,111 @@ mongoose.connect(process.env.MONGODB_URI, { useNewUrlParser: true, useUnifiedTop
 app.get('/', (req, res) => res.json({ status: 'Server is running!', time: new Date().toISOString() }));
 
 app.post('/api/gpt-precheck', async (req, res) => {
-  const { playerId } = req.body;
+  const { playerId, context, latestEntry } = req.body;
   if (!playerId) {
     return res.status(400).json({
       summary: 'Missing playerId',
       logicConsistent: false,
       errors: ['playerId is required'],
       nextActionsAllowed: [],
-      dramaPresent: false
+      dramaPresent: false,
+      storyAdvancing: false,
+      npcIndividualityMaintained: false,
+      newCharactersDetected: false,
+      instructionsAdhered: false
     });
   }
 
   try {
     const player = await Player.findOne({ playerId });
     const npcs = await NPC.find({});
-    const logs = await EventLog.find({ playerId }).sort({ timestamp: -1 }).limit(20);
+    const logs = await EventLog.find({ playerId }).sort({ timestamp: -1 }).limit(50);
 
+    let errors = [];
+
+    // 1. Check if latest entry advances the story
+    const storyAdvancing = (() => {
+      if (!latestEntry || !latestEntry.summary) return false;
+      // Check if latest summary is meaningfully new compared to last few logs (avoid repetition)
+      const recentSummaries = logs.slice(0, 5).map(l => l.summary.toLowerCase());
+      return !recentSummaries.includes(latestEntry.summary.toLowerCase());
+    })();
+
+    if (!storyAdvancing) errors.push('The latest story entry does not advance the story.');
+
+    // 2. Check NPC individuality and info scope
+    const npcIndividualityMaintained = (() => {
+      for (const npc of npcs) {
+        if (!npc.personality || npc.personality.length === 0) return false;
+        for (const memory of npc.memories || []) {
+          if (memory.summary && !logs.some(log => log.summary.includes(memory.summary))) {
+            return false;
+          }
+        }
+      }
+      return true;
+    })();
+
+    if (!npcIndividualityMaintained) errors.push('NPC individuality or knowledge boundaries are not maintained.');
+
+    // 3. Detect new characters in latestEntry
+    const existingNpcIds = new Set(npcs.map(n => n.npcId));
+    const newCharactersDetected = (() => {
+      if (!latestEntry || !latestEntry.data || !latestEntry.data.characterIds) return false;
+      for (const id of latestEntry.data.characterIds) {
+        if (!existingNpcIds.has(id) && id !== playerId) {
+          return true;
+        }
+      }
+      return false;
+    })();
+
+    // 4. Drama and conflict detection (positive and negative)
     const hostileNPCs = npcs.filter(npc =>
       npc.attitudeTowardPlayer && !['friendly', 'neutral'].includes(npc.attitudeTowardPlayer)
     );
-
     const highConflictNPCs = npcs.filter(npc => npc.conflictLevel >= 50);
-
     const dramaLogs = logs.filter(log =>
-      /argue|tension|refuse|yelled|betray|fight|secret/.test(log.summary.toLowerCase()) ||
-      log.feeling === 'tense' || log.urgency > 70
+      /argue|tension|refuse|yelled|betray|fight|secret|rivalry|competition|alliance/.test(log.summary.toLowerCase()) ||
+      ['tense', 'excited', 'hopeful', 'nervous'].includes(log.feeling) ||
+      log.urgency > 70
     );
-
     const dramaPresent = hostileNPCs.length > 0 || dramaLogs.length > 0 || highConflictNPCs.length > 0;
-    const errors = [];
 
-    if (!dramaPresent) {
-      errors.push('No dramatic conflict detected. NPCs should express independence, tension, or rivalry.');
-    }
+    if (!dramaPresent) errors.push('No dramatic conflict or positive drama detected.');
+
+    // 5. Adherence to instructions - simplified validation
+    const instructionsAdhered = (() => {
+      if (!playerId || !context) return false;
+      if (!latestEntry || !latestEntry.summary) return false;
+      return true;
+    })();
+
+    if (!instructionsAdhered) errors.push('Instructions are not fully adhered to.');
 
     res.json({
       summary: 'Precheck completed',
-      logicConsistent: true,
+      logicConsistent: errors.length === 0,
       errors,
       nextActionsAllowed: [],
-      dramaPresent
+      dramaPresent,
+      storyAdvancing,
+      npcIndividualityMaintained,
+      newCharactersDetected,
+      instructionsAdhered
     });
+
   } catch (err) {
     res.status(500).json({
       summary: 'Server error',
       logicConsistent: false,
       errors: [err.message],
       nextActionsAllowed: [],
-      dramaPresent: false
+      dramaPresent: false,
+      storyAdvancing: false,
+      npcIndividualityMaintained: false,
+      newCharactersDetected: false,
+      instructionsAdhered: false
     });
   }
 });
@@ -285,5 +341,4 @@ app.post('/api/log-batch-events', async (req, res) => {
 // ------------------- Start Server -----------------------
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-
 
