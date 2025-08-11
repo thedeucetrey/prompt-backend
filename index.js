@@ -77,6 +77,9 @@ const npcSchema = new mongoose.Schema({
   relationships: [relationshipSchema],
   memories: [memorySchema],
   state: Object,
+  description: String,
+  details: String,
+  bio: String,
 });
 const NPC = mongoose.model('NPC', npcSchema);
 
@@ -89,10 +92,34 @@ mongoose.connect(process.env.MONGODB_URI, { useNewUrlParser: true, useUnifiedTop
     process.exit(1);
   });
 
+// ------------------- Helper: Simulate Real Person Lookup ---------------------
+
+// This is a stub function to simulate looking up a real person by name.
+// In a real implementation, you might query an external API or database.
+async function findRealPersonByName(name) {
+  // Example simple hardcoded matches
+  const realPeople = {
+    'danny devito': {
+      description: 'American actor known for roles in film and television.',
+      details: 'Famous for his unique voice and dynamic characters.',
+      bio: 'Danny DeVito is an award-winning actor, producer, and director.',
+    },
+    'albert einstein': {
+      description: 'Theoretical physicist who developed the theory of relativity.',
+      details: 'One of the most influential scientists of the 20th century.',
+      bio: 'Albert Einstein revolutionized physics with his theories and won the Nobel Prize in 1921.',
+    },
+    // Add more as needed
+  };
+  const key = name.toLowerCase();
+  return realPeople[key] || null;
+}
+
 // ------------------- Routes ----------------------
 
 app.get('/', (req, res) => res.json({ status: 'Server is running!', time: new Date().toISOString() }));
 
+// Precheck route enhanced
 app.post('/api/gpt-precheck', async (req, res) => {
   const { playerId, context, latestEntry } = req.body;
   if (!playerId) {
@@ -119,7 +146,6 @@ app.post('/api/gpt-precheck', async (req, res) => {
     // 1. Check if latest entry advances the story
     const storyAdvancing = (() => {
       if (!latestEntry || !latestEntry.summary) return false;
-      // Check if latest summary is meaningfully new compared to last few logs (avoid repetition)
       const recentSummaries = logs.slice(0, 5).map(l => l.summary.toLowerCase());
       return !recentSummaries.includes(latestEntry.summary.toLowerCase());
     })();
@@ -152,6 +178,13 @@ app.post('/api/gpt-precheck', async (req, res) => {
       }
       return false;
     })();
+
+    if (newCharactersDetected) {
+      // Here you might trigger automatic NPC creation or notify the system to do so.
+      // For example:
+      // await autoCreateNewNPCs(latestEntry.data.characterIds, existingNpcIds);
+      // This logic is left as a stub for future integration.
+    }
 
     // 4. Drama and conflict detection (positive and negative)
     const hostileNPCs = npcs.filter(npc =>
@@ -203,6 +236,70 @@ app.post('/api/gpt-precheck', async (req, res) => {
   }
 });
 
+// New endpoint to create a detailed NPC character profile
+app.post('/api/npc/create-character', async (req, res) => {
+  const { npcId, name, description, details, bio, isHistorical = false } = req.body;
+
+  if (!npcId || !name || !description || !details || !bio) {
+    return res.status(400).json({ error: 'npcId, name, description, details, and bio are required.' });
+  }
+
+  try {
+    let finalDescription = description;
+    let finalDetails = details;
+    let finalBio = bio;
+
+    if (isHistorical) {
+      // Attempt to find real person data
+      const realPersonData = await findRealPersonByName(name);
+      if (realPersonData) {
+        finalDescription = realPersonData.description;
+        finalDetails = realPersonData.details;
+        finalBio = realPersonData.bio;
+      }
+    }
+
+    // Check if NPC already exists
+    let npc = await NPC.findOne({ npcId });
+    if (npc) {
+      return res.status(400).json({ error: 'NPC with this npcId already exists.' });
+    }
+
+    npc = new NPC({
+      npcId,
+      name,
+      description: finalDescription,
+      details: finalDetails,
+      bio: finalBio,
+      personality: [],
+      mood: null,
+      attitudeTowardPlayer: null,
+      conflictLevel: 0,
+      lastConflictWithPlayer: null,
+      relationships: [],
+      memories: [],
+      state: {},
+      location: null,
+    });
+
+    await npc.save();
+
+    // Log NPC creation event
+    await NPCEventLog.create({
+      npcId,
+      summary: `NPC ${name} created with detailed profile.`,
+      feeling: 'neutral',
+      data: { description: finalDescription, details: finalDetails, bio: finalBio }
+    });
+
+    res.json(npc);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Remaining original routes unchanged (player, npc, event logs, inventory, etc.)
+
 app.post('/api/player', async (req, res) => {
   try {
     const { playerId, name, location, stats } = req.body;
@@ -236,9 +333,9 @@ app.patch('/api/player/:playerId', async (req, res) => {
 
 app.post('/api/npc', async (req, res) => {
   try {
-    const { npcId, name, location, personality, mood, attitudeTowardPlayer, conflictLevel, lastConflictWithPlayer, relationships, memories, state } = req.body;
+    const { npcId, name, location, personality, mood, attitudeTowardPlayer, conflictLevel, lastConflictWithPlayer, relationships, memories, state, description, details, bio } = req.body;
     if (!npcId) return res.status(400).json({ error: 'npcId required' });
-    const npc = await NPC.create({ npcId, name, location, personality, mood, attitudeTowardPlayer, conflictLevel, lastConflictWithPlayer, relationships, memories, state });
+    const npc = await NPC.create({ npcId, name, location, personality, mood, attitudeTowardPlayer, conflictLevel, lastConflictWithPlayer, relationships, memories, state, description, details, bio });
     res.json(npc);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -341,4 +438,5 @@ app.post('/api/log-batch-events', async (req, res) => {
 // ------------------- Start Server -----------------------
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
 
