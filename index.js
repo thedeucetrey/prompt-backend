@@ -240,10 +240,6 @@ app.post('/api/gpt-precheck', async (req, res) => {
       return false;
     })();
 
-    if (newCharactersDetected) {
-      // Future place to trigger auto NPC creation logic if desired
-    }
-
     const hostileNPCs = npcs.filter(npc =>
       npc.attitudeTowardPlayer && !['friendly', 'neutral'].includes(npc.attitudeTowardPlayer)
     );
@@ -409,7 +405,7 @@ app.post('/api/story/references', (req, res) => {
   res.json({ references });
 });
 
-// Remaining routes (player, npc, event logs, inventory) unchanged
+// ------------------- Player Routes ----------------------
 
 app.post('/api/player', async (req, res) => {
   try {
@@ -442,6 +438,8 @@ app.patch('/api/player/:playerId', async (req, res) => {
   }
 });
 
+// ------------------- NPC Routes ----------------------
+
 app.post('/api/npc', async (req, res) => {
   try {
     const { npcId, name, location, personality, mood, attitudeTowardPlayer, conflictLevel, lastConflictWithPlayer, relationships, memories, state, description, details, bio } = req.body;
@@ -473,6 +471,8 @@ app.patch('/api/npc/:npcId', async (req, res) => {
   }
 });
 
+// ------------------- Event Logs ----------------------
+
 app.post('/api/log-event', async (req, res) => {
   try {
     const { playerId, type, summary, feeling, data, requiresPlayerInput, nextTrigger, urgency } = req.body;
@@ -486,66 +486,4 @@ app.post('/api/log-event', async (req, res) => {
 
 app.get('/api/log-event/:playerId', async (req, res) => {
   try {
-    const logs = await EventLog.find({ playerId: req.params.playerId }).sort({ timestamp: -1 }).limit(100);
-    res.json({ logs });
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
-
-app.post('/api/log-npc-event', async (req, res) => {
-  try {
-    const { npcId, summary, feeling, data } = req.body;
-    if (!npcId || !summary) return res.status(400).json({ error: 'npcId and summary required' });
-    const log = await NPCEventLog.create({ npcId, summary, feeling, data });
-    await NPC.updateOne({ npcId }, { $push: { memories: { summary, feeling, data } } });
-    res.json(log);
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
-
-app.post('/api/inventory', async (req, res) => {
-  try {
-    const { playerId, items } = req.body;
-    if (!playerId) return res.status(400).json({ error: 'playerId required' });
-    const inv = await Inventory.findOneAndUpdate({ playerId }, { items }, { new: true, upsert: true });
-    res.json(inv);
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
-
-app.get('/api/inventory/:playerId', async (req, res) => {
-  try {
-    const inv = await Inventory.findOne({ playerId: req.params.playerId });
-    res.json(inv || { playerId: req.params.playerId, items: [] });
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
-
-app.post('/api/log-batch-events', async (req, res) => {
-  try {
-    const { events } = req.body;
-    if (!Array.isArray(events)) return res.status(400).json({ error: 'Invalid events array' });
-    const results = [];
-    for (const event of events) {
-      if (event.entityType === 'player') {
-        const log = await EventLog.create({ playerId: event.entityId, type: 'event', summary: event.summary, feeling: event.feeling, data: event.data, requiresPlayerInput: event.requiresPlayerInput, nextTrigger: event.nextTrigger, urgency: event.urgency });
-        results.push(log);
-      } else if (event.entityType === 'npc') {
-        const log = await NPCEventLog.create({ npcId: event.entityId, summary: event.summary, feeling: event.feeling, data: event.data });
-        await NPC.updateOne({ npcId: event.entityId }, { $push: { memories: { summary: event.summary, feeling: event.feeling, data: event.data } } });
-        results.push(log);
-      }
-    }
-    res.json({ success: true, logs: results });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ------------------- Start Server -----------------------
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+    const logs = await EventLog.find({ playerId: req.params.playerId }).sort({ timestamp:
