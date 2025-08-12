@@ -486,4 +486,148 @@ app.post('/api/log-event', async (req, res) => {
 
 app.get('/api/log-event/:playerId', async (req, res) => {
   try {
-    const logs = await EventLog.find({ playerId: req.params.playerId }).sort({ timestamp:
+    const logs = await EventLog.find({ playerId: req.params.playerId }).sort({ timestamp: -1 }).limit(100);
+    res.json({ logs });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/log-npc-event', async (req, res) => {
+  try {
+    const { npcId, summary, feeling, data } = req.body;
+    if (!npcId || !summary) return res.status(400).json({ error: 'npcId and summary required' });
+    const log = await NPCEventLog.create({ npcId, summary, feeling, data });
+    await NPC.updateOne({ npcId }, { $push: { memories: { summary, feeling, data } } });
+    res.json(log);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ------------------- Inventory ----------------------
+
+app.post('/api/inventory', async (req, res) => {
+  try {
+    const { playerId, items } = req.body;
+    if (!playerId) return res.status(400).json({ error: 'playerId required' });
+    const inv = await Inventory.findOneAndUpdate({ playerId }, { items }, { new: true, upsert: true });
+    res.json(inv);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get('/api/inventory/:playerId', async (req, res) => {
+  try {
+    const inv = await Inventory.findOne({ playerId: req.params.playerId });
+    res.json(inv || { playerId: req.params.playerId, items: [] });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ------------------- Unified Save Game Endpoint ----------------------
+
+app.post('/api/save-game', async (req, res) => {
+  /*
+    Expected JSON body:
+    {
+      player: { playerId, name, location, stats },
+      npcs: [ {...}, {...} ],
+      inventories: [ { playerId, items }, ... ],
+      playerEventLogs: [ {...}, ... ],
+      npcEventLogs: [ {...}, ... ]
+    }
+  */
+
+  const { player, npcs = [], inventories = [], playerEventLogs = [], npcEventLogs = [] } = req.body;
+
+  const results = {
+    player: null,
+    npcs: [],
+    inventories: [],
+    playerEventLogs: [],
+    npcEventLogs: [],
+    errors: []
+  };
+
+  try {
+    // 1) Save or update player
+    if (player && player.playerId) {
+      results.player = await Player.findOneAndUpdate(
+        { playerId: player.playerId },
+        player,
+        { new: true, upsert: true, setDefaultsOnInsert: true }
+      );
+    }
+
+    // 2) Save or update NPCs
+    for (const npcData of npcs) {
+      if (!npcData.npcId) {
+        results.errors.push(`Missing npcId for NPC with name ${npcData.name || 'unknown'}`);
+        continue;
+      }
+      const updatedNPC = await NPC.findOneAndUpdate(
+        { npcId: npcData.npcId },
+        npcData,
+        { new: true, upsert: true, setDefaultsOnInsert: true }
+      );
+      results.npcs.push(updatedNPC);
+    }
+
+    // 3) Save or update inventories
+    for (const inv of inventories) {
+      if (!inv.playerId) {
+        results.errors.push(`Missing playerId in inventory`);
+        continue;
+      }
+      const updatedInv = await Inventory.findOneAndUpdate(
+        { playerId: inv.playerId },
+        { items: inv.items || [] },
+        { new: true, upsert: true, setDefaultsOnInsert: true }
+      );
+      results.inventories.push(updatedInv);
+    }
+
+    // 4) Log player event logs
+    for (const pel of playerEventLogs) {
+      if (!pel.playerId || !pel.type || !pel.summary) {
+        results.errors.push(`Invalid player event log entry: ${JSON.stringify(pel)}`);
+        continue;
+      }
+      const createdPEL = await EventLog.create(pel);
+      results.playerEventLogs.push(createdPEL);
+    }
+
+    // 5) Log NPC event logs & append memories
+    for (const nel of npcEventLogs) {
+      if (!nel.npcId || !nel.summary) {
+        results.errors.push(`Invalid NPC event log entry: ${JSON.stringify(nel)}`);
+        continue;
+      }
+      const createdNEL = await NPCEventLog.create(nel);
+      results.npcEventLogs.push(createdNEL);
+      // Also push to NPC memories array
+      await NPC.updateOne(
+        { npcId: nel.npcId },
+        { $push: { memories: { summary: nel.summary, feeling: nel.feeling, data: nel.data } } }
+      );
+    }
+
+    if (results.errors.length > 0) {
+      return res.status(400).json({ success: false, message: 'Partial save with errors', results });
+    }
+
+    res.json({ success: true, message: 'Game state saved successfully', results });
+
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ------------------- Start Server -----------------------
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
