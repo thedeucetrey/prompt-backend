@@ -626,6 +626,51 @@ app.post('/api/save-game', async (req, res) => {
   }
 });
 
+// ------------------- Load Game Endpoint ----------------------
+
+app.post('/api/load-game', async (req, res) => {
+  const { playerId } = req.body;
+
+  if (!playerId) {
+    return res.status(400).json({ success: false, message: 'playerId is required' });
+  }
+
+  try {
+    // Fetch player
+    const player = await Player.findOne({ playerId });
+    if (!player) {
+      return res.status(404).json({ success: false, message: 'Saved game not found.' });
+    }
+
+    // Fetch all NPCs
+    const npcs = await NPC.find({});
+
+    // Fetch inventories for player
+    const inventories = await Inventory.find({ playerId });
+
+    // Fetch latest player event logs
+    const playerEventLogs = await EventLog.find({ playerId }).sort({ timestamp: -1 }).limit(100);
+
+    // Fetch NPC event logs for NPCs
+    const npcIds = npcs.map(npc => npc.npcId);
+    const npcEventLogs = await NPCEventLog.find({ npcId: { $in: npcIds } }).sort({ timestamp: -1 }).limit(100);
+
+    res.json({
+      success: true,
+      message: 'Game state loaded successfully.',
+      results: {
+        player,
+        npcs,
+        inventories,
+        playerEventLogs,
+        npcEventLogs
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // ------------------- Start Server -----------------------
 
 const PORT = process.env.PORT || 3000;
